@@ -13,13 +13,13 @@ struct ZoomableModifier: ViewModifier {
     let minZoomScale: CGFloat
     let maximumScale: CGFloat
     let doubleTapZoomScale: CGFloat
-    var opacityUpdate: ((CGFloat) -> ())?
-    var onDismiss: (() -> ())?
-    
+    @Binding var canDragDismiss: Bool
     @State private var lastTransform: CGAffineTransform = .identity
     @State private var transform: CGAffineTransform = .identity
     @State private var contentSize: CGSize = .zero
     
+    @available(iOS, introduced: 16.0, deprecated: 17.0)
+    @State private var anchorPoint: CGPoint = .zero
     func body(content: Content) -> some View {
         content
             .background(alignment: .topLeading) {
@@ -31,11 +31,16 @@ struct ZoomableModifier: ViewModifier {
                 }
             }
             .animatableTransformEffect(transform)
-            .gesture(dragGesture, including: transform == .identity ? .none : .all)
-            .gesture(dragDissmissGesture, including: transform.isScaleIdentity ? .all : .none)
+            .gesture(dragGesture, including: transform.isScaleIdentity ? .none : .all)
+            .onChange(of: transform, perform: { newValue in
+                canDragDismiss = transform.isScaleIdentity
+                print(canDragDismiss)
+            })
+//            .gesture(dragDissmissGesture, including: transform.isScaleIdentity ? .all : .none)
+//            .simultaneousGesture(oldMagnificationGesture)
             .modify { view in
                 if #available(iOS 17.0, *) {
-                    view.gesture(magnificationGesture)
+                    view.simultaneousGesture(magnificationGesture)
                 } else {
                     view.gesture(oldMagnificationGesture)
                 }
@@ -45,15 +50,27 @@ struct ZoomableModifier: ViewModifier {
 
     @available(iOS, introduced: 16.0, deprecated: 17.0)
     private var oldMagnificationGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                let zoomFactor = 0.5
-                let scale = min(value * zoomFactor, maximumScale)
-                transform = lastTransform.scaledBy(x: scale, y: scale)
-            }
-            .onEnded { _ in
-                onEndGesture()
-            }
+        SimultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    anchorPoint = value.location // Capture start location of the pinch
+                },
+            MagnificationGesture()
+                .onChanged { value in
+                    let zoomFactor = 0.5
+                    let scale = min(value * zoomFactor, maximumScale)
+                    
+                    // Compute transform relative to the anchor point
+                    let newTransform = CGAffineTransform.anchoredScale(scale: scale, anchor: anchorPoint)
+                    
+                    withAnimation(.interactiveSpring()) {
+                        transform = lastTransform.concatenating(newTransform)
+                    }
+                }
+                .onEnded { _ in
+                    onEndGesture()
+                }
+        )
     }
 
     @available(iOS 17.0, *)
@@ -118,39 +135,6 @@ struct ZoomableModifier: ViewModifier {
             lastTransform = newTransform
         }
     }
-    
-    private var dragDissmissGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                let opacity = 1 - Double(abs(transform.ty / 500))
-                opacityUpdate?(min(1, max(opacity, 0.3)))
-                
-                transform = lastTransform.translatedBy(
-                    x: value.translation.width / transform.scaleX,
-                    y: value.translation.height / transform.scaleY
-                )
-            }
-            .onEnded { value in
-//                if value.velocity.height != 0 {
-//                    onDismiss?()
-//                } else {
-//                    withAnimation(.interactiveSpring) {
-//                        opacityUpdate?(1)
-//                        transform = .identity
-//                    }
-//                }
-                let dragDistance = max(value.translation.width, value.translation.height)
-                if dragDistance > 100 {
-                    onDismiss?()
-                } else {
-                    withAnimation(.interactiveSpring) {
-                        opacityUpdate?(1)
-                        transform = .identity
-                        lastTransform = .identity
-                    }
-                }
-            }
-    }
 
     private func limitTransform(_ transform: CGAffineTransform) -> CGAffineTransform {
         let scaleX = transform.scaleX
@@ -188,39 +172,14 @@ public extension View {
         minZoomScale: CGFloat = 1,
         maximumScale: CGFloat = 5,
         doubleTapZoomScale: CGFloat = 3,
-        opacityUpdate: ((CGFloat) -> ())?,
-        onDismiss: (() -> ())?
+        canDragDismiss: Binding<Bool>
     ) -> some View {
         modifier(ZoomableModifier(
             minZoomScale: minZoomScale,
             maximumScale: maximumScale,
             doubleTapZoomScale: doubleTapZoomScale,
-            opacityUpdate: opacityUpdate,
-            onDismiss: onDismiss
+            canDragDismiss: canDragDismiss
         ))
-    }
-
-    @ViewBuilder
-    func zoomable(
-        minZoomScale: CGFloat = 1,
-        maximumScale: CGFloat = 5,
-        doubleTapZoomScale: CGFloat = 3,
-        outOfBoundsColor: Color = .clear,
-        opacityUpdate: ((CGFloat) -> ())?,
-        onDismiss: (() -> ())?
-    ) -> some View {
-        GeometryReader { proxy in
-            ZStack {
-                outOfBoundsColor
-                self.zoomable(
-                    minZoomScale: minZoomScale,
-                    maximumScale: maximumScale,
-                    doubleTapZoomScale: doubleTapZoomScale,
-                    opacityUpdate: opacityUpdate,
-                    onDismiss: onDismiss
-                )
-            }
-        }
     }
 }
 

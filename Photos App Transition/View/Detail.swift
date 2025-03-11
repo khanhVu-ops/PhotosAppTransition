@@ -10,31 +10,35 @@ import SwiftUIIntrospect
 
 struct Detail: View {
     @EnvironmentObject private var coordinator: UICoordinator
+    @State private var isDragging: Bool = false
+    @State private var canDragDismiss = true
+
     var body: some View {
         VStack(spacing: 0){
             NavigationBar()
             GeometryReader{
                 let size =  $0.size
                 
-                ScrollView(.horizontal){
+                ScrollView(.horizontal) {
                     ScrollViewReader { proxy in
                         LazyHStack(spacing: 0){
                             ForEach(coordinator.items){
                                  item in
                                 ImageView(item, size: size)
+                                    .zoomable(canDragDismiss: $canDragDismiss)
                                     .id(item.id)
+                                    
                             }
                         }
                         .onAppear {
                             proxy.scrollTo(coordinator.selectedItem?.id)
                         }
                     }
-                    
-                    
-//                    .scrollTargetLayout()
                 }
+                
                 .introspect(.scrollView, on: .iOS(.v16, .v17, .v18), customize: { scrollView in
                     scrollView.isPagingEnabled = true
+                    scrollView.isScrollEnabled = !isDragging && canDragDismiss
                     scrollView.showsHorizontalScrollIndicator = false
                     scrollView.contentInsetAdjustmentBehavior = .never
                 })
@@ -48,35 +52,11 @@ struct Detail: View {
                     }
                 }
                 .offset(coordinator.offset)
-                
-                Rectangle()
-                    .foregroundStyle(.clear)
-//                    .frame(width: 10)
-                    .contentShape(.rect)
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged({ value in
-                                let translation = value.translation
-                                coordinator.offset = value.translation
-                                let heightProcess = max(min(translation.height / 200, 1), 0)
-                                coordinator.dragProcess = heightProcess
-                            })
-                            .onEnded({ value in
-                                let translation = value.translation
-                                let velocity = value.velocity
-                                let height = translation.height + (velocity.height / 5)
-                                if height > (size.height * 0.5) {
-                                    coordinator.toogleView(show: false)
-                                } else {
-                                    withAnimation(.easeIn(duration: 0.2)) {
-                                        coordinator.offset = .zero
-                                        coordinator.dragProcess = 0
-                                    }
-                                }
-                            })
-                    )
+                .gesture(dragToDismissGesture(), including: canDragDismiss ? .gesture : .none)
+
             }
             .opacity(coordinator.showDetailView ? 1 : 0)
+            
             BottomIndicatorView()
                 .offset(y: coordinator.showDetailView ? 0 : 120)
                 .animation(.easeInOut(duration: 0.15), value: coordinator.showDetailView)
@@ -85,6 +65,31 @@ struct Detail: View {
         .onAppear{
             coordinator.toogleView(show: true)
         }
+    }
+    
+    private func dragToDismissGesture() -> some Gesture {
+        DragGesture(minimumDistance: 15)
+        .onChanged({ value in
+            let translation = value.translation
+            coordinator.offset = value.translation
+            let heightProcess = max(min(abs(translation.height) / 500, 1), 0)
+            coordinator.dragProcess = heightProcess
+            isDragging = true
+        })
+        .onEnded({ value in
+            isDragging = false
+            let translation = value.translation
+            let velocity = value.velocity
+            let height = translation.height + (velocity.height / 5)
+            if abs(height) > 100 {
+                coordinator.toogleView(show: false)
+            } else {
+                withAnimation(.easeIn(duration: 0.2)) {
+                    coordinator.offset = .zero
+                    coordinator.dragProcess = 0
+                }
+            }
+        })
     }
     
   
